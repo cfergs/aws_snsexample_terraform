@@ -1,5 +1,5 @@
 #Create Dynamo database
-resource "aws_dynamodb_table" "customertable" {
+resource "aws_dynamodb_table" "customer" {
   name           = "Customer"
   billing_mode   = "PROVISIONED"
   read_capacity  = 5
@@ -12,7 +12,7 @@ resource "aws_dynamodb_table" "customertable" {
   }
 }
 
-resource "aws_dynamodb_table" "customertrans" {
+resource "aws_dynamodb_table" "transactions" {
   name           = "Transactions"
   billing_mode   = "PROVISIONED"
   read_capacity  = 5
@@ -30,6 +30,7 @@ resource "aws_dynamodb_table" "customertrans" {
     type = "S"
   }
 
+  stream_enabled    = true
   stream_view_type  = "NEW_IMAGE"
 }
 

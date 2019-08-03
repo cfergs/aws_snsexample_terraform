@@ -17,8 +17,35 @@ resource "aws_s3_bucket" "bucket" {
 
 resource "aws_lambda_function" "lambda" {
   function_name = "TransactionProcessor"
+  description   = "Process data and send to DynamoDB tables"
   runtime       = "python2.7"
   role          = "${aws_iam_role.TransactionProcessor.arn}"
   filename      = "TransactionProcessor.zip"
   handler       = "lambda_function.lambda_handler"
+  timeout       = "20"
+}
+
+resource "aws_s3_bucket_notification" "bucket_notification" {
+  bucket = "${aws_s3_bucket.bucket.id}"
+
+  lambda_function {
+    lambda_function_arn = "${aws_lambda_function.lambda.arn}"
+    events              = ["s3:ObjectCreated:*"]
+  }
+}
+
+resource "aws_lambda_function" "totalnotifier" {
+  function_name = "TotalNotifier"
+  description   = "Update total, send notification for balance exceeding $1500"
+  runtime       = "python2.7"
+  role          = "${aws_iam_role.TotalNotifier.arn}"
+  filename      = "TotalNotifier.zip"
+  handler       = "lambda_function.lambda_handler"
+  timeout       = "20"
+}
+
+resource "aws_lambda_event_source_mapping" "example" {
+  event_source_arn  = "${aws_dynamodb_table.transactions.stream_arn}"
+  function_name     = "${aws_lambda_function.totalnotifier.arn}"
+  starting_position = "LATEST"
 }

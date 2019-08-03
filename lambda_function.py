@@ -1,18 +1,20 @@
-# TransactionProcessor Lambda function
+# TotalNotifier Lambda function
 #
-# This function is triggered by an object being created in an Amazon S3 bucket.
-# The file is downloaded and each line is inserted into DynamoDB tables.
+# This function is triggered when values are inserted into the Transactions DynamoDB table.
+# Transaction totals are calculated and notifications are sent to SNS if limits are exceeded.
 
 from __future__ import print_function
-import json, urllib, boto3, csv
+import json, boto3
 
-# Connect to S3 and DynamoDB
-s3 = boto3.resource('s3')
+# Connect to SNS
+sns = boto3.client('sns')
+alertTopic = 'HighBalanceAlert'
+snsTopicArn = [t['TopicArn'] for t in sns.list_topics()['Topics'] if t['TopicArn'].endswith(':' + alertTopic)][0]
+
+# Connect to DynamoDB
 dynamodb = boto3.resource('dynamodb')
-
-# Connect to the DynamoDB tables
-customerTable     = dynamodb.Table('Customer');
-transactionsTable = dynamodb.Table('Transactions');
+transactionTotalTableName = 'TransactionTotal'
+transactionsTotalTable = dynamodb.Table(transactionTotalTableName);
 
 # This handler is executed every time the Lambda function is triggered
 def lambda_handler(event, context):
@@ -20,49 +22,41 @@ def lambda_handler(event, context):
   # Show the incoming event in the debug log
   print("Event received by Lambda function: " + json.dumps(event, indent=2))
 
-  # Get the bucket and object key from the Event
-  bucket = event['Records'][0]['s3']['bucket']['name']
-  key = urllib.unquote_plus(event['Records'][0]['s3']['object']['key']).decode('utf8')
-  localFilename = '/tmp/transactions.txt'
+  # For each transaction added, calculate the new Transactions Total
+  for record in event['Records']:
+    customerId = record['dynamodb']['NewImage']['CustomerId']['S']
+    transactionAmount = int(record['dynamodb']['NewImage']['TransactionAmount']['N'])
 
-  # Download the file from S3 to the local filesystem
-  try:
-    s3.meta.client.download_file(bucket, key, localFilename)
-  except Exception as e:
-    print(e)
-    print('Error getting object {} from bucket {}. Make sure they exist and your bucket is in the same region as this function.'.format(key, bucket))
-    raise e
+    # Update the customer's total in the TransactionTotal DynamoDB table
+    response = transactionsTotalTable.update_item(
+      Key={
+        'CustomerId': customerId
+      },
+      UpdateExpression="add accountBalance :val",
+      ExpressionAttributeValues={
+        ':val': transactionAmount
+      },
+      ReturnValues="UPDATED_NEW"
+    )
 
-  # Read the Transactions CSV file. Delimiter is the '|' character
-  with open(localFilename) as csvfile:
-    reader = csv.DictReader(csvfile, delimiter='|')
+    # Retrieve the latest account balance
+    latestAccountBalance = response['Attributes']['accountBalance']
+    print("Latest account balance: " + format(latestAccountBalance))
 
-    # Read each row in the file
-    rowCount = 0
-    for row in reader:
-      rowCount += 1
+    # If balance > $1500, send a message to SNS
+    if latestAccountBalance >= 1500:
 
-      # Show the row in the debug log
-      print(row['customer_id'], row['customer_address'], row['trn_id'], row['trn_date'], row['trn_amount'])
+      # Construct message to be sent
+      message = '{"customerID": "' + customerId + '", ' + '"accountBalance": "' + str(latestAccountBalance) + '"}'
+      print(message)
 
-      try:
-        # Insert Customer ID and Address into Customer DynamoDB table
-        customerTable.put_item(
-          Item={
-            'CustomerId': row['customer_id'],
-            'Address':  row['customer_address']})
+      # Send message to SNS
+      sns.publish(
+        TopicArn=snsTopicArn,
+        Message=message,
+        Subject='Warning! Account balance is very high',
+        MessageStructure='raw'
+      )
 
-        # Insert transaction details into Transactions DynamoDB table
-        transactionsTable.put_item(
-          Item={
-            'CustomerId':    row['customer_id'],
-            'TransactionId':   row['trn_id'],
-            'TransactionDate':  row['trn_date'],
-            'TransactionAmount': int(row['trn_amount'])})
-
-      except Exception as e:
-         print(e)
-         print("Unable to insert data into DynamoDB table".format(e))
-
-    # Finished!
-    return "%d transactions inserted" % rowCount
+  # Finished!
+  return 'Successfully processed {} records.'.format(len(event['Records']))
