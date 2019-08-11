@@ -38,7 +38,7 @@ resource "aws_lambda_function" "totalnotifier" {
 #lambda to grant access to S3
 resource "aws_lambda_permission" "lambdaS3_permission" {
   depends_on    = ["aws_lambda_function.transactionprocessor"]
-  statement_id  = "AllowWildrydesAPIInvoke"
+  statement_id  = "AllowLambdaInvokefromS3"
   action        = "lambda:InvokeFunction"
   function_name = "${aws_lambda_function.transactionprocessor.function_name}"
   principal     = "s3.amazonaws.com"
